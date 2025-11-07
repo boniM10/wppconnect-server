@@ -1,55 +1,66 @@
-# Étape 1 : Base
-FROM node:22-bullseye AS base
+# ======================
+# BASE IMAGE
+# ======================
+FROM node:22.21.1-alpine AS base
 WORKDIR /usr/src/wpp-server
 
-# Empêche Puppeteer de re-télécharger Chromium
-ENV NODE_ENV=production PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+# Variables d’environnement
+ENV NODE_ENV=production \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-# Installe dépendances systèmes nécessaires à Sharp & Chromium
-RUN apt-get update && \
-    apt-get install -y \
-    libvips-dev \
-    chromium \
-    fonts-liberation \
-    libappindicator3-1 \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    xdg-utils \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Copie uniquement package.json (pas de yarn.lock)
+COPY package.json ./
 
-COPY package.json yarn.lock ./
+# Installation des dépendances système nécessaires
+RUN apk update && \
+    apk add --no-cache \
+    vips-dev \
+    fftw-dev \
+    gcc \
+    g++ \
+    make \
+    libc6-compat \
+    && rm -rf /var/cache/apk/*
 
+# Installation des dépendances Node en mode production
 RUN yarn install --production --pure-lockfile && \
     yarn add sharp --ignore-engines && \
     yarn cache clean
 
-# Étape 2 : Build
+
+# ======================
+# BUILD STAGE
+# ======================
 FROM base AS build
 WORKDIR /usr/src/wpp-server
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
-COPY package.json yarn.lock ./
-RUN yarn install --production=false --pure-lockfile
+# Copier le fichier de dépendances
+COPY package.json ./
+
+# Installation de toutes les dépendances (dev incluses)
+RUN yarn install --production=false --pure-lockfile && yarn cache clean
+
+# Copier le reste du projet
 COPY . .
+
+# Build du projet
 RUN yarn build
 
-# Étape 3 : Exécution
-FROM base
-WORKDIR /usr/src/wpp-server
 
+# ======================
+# FINAL IMAGE
+# ======================
+FROM base
+WORKDIR /usr/src/wpp-server/
+
+# Installer Chromium pour Puppeteer
+RUN apk add --no-cache chromium && yarn cache clean
+
+# Copier tous les fichiers buildés depuis l’étape précédente
 COPY --from=build /usr/src/wpp-server/ /usr/src/wpp-server/
+
+# Exposition du port de ton app
 EXPOSE 21465
 
+# Commande de lancement
 ENTRYPOINT ["node", "dist/server.js"]
